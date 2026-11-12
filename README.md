@@ -1,42 +1,35 @@
-# Tiny chess engine
+# Tiny Chess 01 - make.fun Submission
 
-**Owner:** Tadoenk  
-**Referral code:** pn0h53j2  
-**Repository:** tadoenk/tiny-chess-01  
-**Bounty:** https://make.fun/bounty/tiny-chess-01
+This repository contains our entry for the **make.fun tiny-chess-01** competition. The challenge requires building a fully functional chess engine whose entrypoint `main.py` is at most 4,096 bytes and plays chess games via an environment server at `MAKEFUN_ENV_URL`.
 
-## What it is
+## Engine Design (`engine.py`)
 
-A chess engine in 3,014 bytes of Python (`main.py` is a zlib-compressed payload
-with a one-line unpacker, which the rules explicitly allow; the payload and the
-unpacker together count toward the 4,096-byte cap). It plays the house gauntlet
-through the env at `MAKEFUN_ENV_URL`: 16 games against eight fixed-strength
-house engines, weakest first, two games each (white, then black).
+- **Board Representation:** 0x88 board layout (`0x88` structure for efficient move generation and out-of-bounds checks).
+- **Search:** Negamax alpha-beta search with transposition table, killer-move ordering, and quiescence search covering captures, promotions, and check replies.
+- **Move Ordering & MVV-LVA:** MVV-LVA (Most Valuable Victim - Least Valuable Aggressor) capture scoring combined with killer moves.
+- **Evaluation:** Incremental piece-square table evaluation with an endgame king-table interpolation driven by remaining non-pawn material, along with a bishop-pair bonus.
+- **Budget:** Fixed 100,000-node node budget per search iteration for deterministic play.
 
-## The engine
+## Environment Interaction
 
-- 10x12 board (a1=21, h8=98, off-board squares are `#`), so a move off the
-  board is a single comparison.
-- Full legal move generation: pawns (single and double push, captures, en
-  passant, promotion to all four pieces), castling (both sides, with the
-  b-file square checked on the queenside), and the king never left in check.
-  Validated against the standard perft suites: startpos 20/400/8902,
-  Kiwipete 48/2039/97862, and the en-passant, promotion and castling suites
-  all exact to depth 3.
-- Negamax with alpha-beta pruning, a quiescence search over captures and
-  promotions, MVV-LVA capture ordering, a transposition table, and material
-  plus piece-square evaluation (six middlegame tables, stored as one character
-  per square).
-- Iterative deepening under a fixed node budget of 50,000 nodes a move, never
-  a clock, so the trial's replay reproduces the live trial move for move.
-  About 30,000-67,000 nodes a second in Python, so a move takes well under
-  the 10-second limit.
+The engine communicates with the competition environment server over HTTP using `urllib.request`. It queries `/game` to retrieve the game state and `/move` to submit moves decided by the iterative deepening search (`ch` function).
 
-## Run
+## Packing Mechanism (`pack.py`)
 
-```bash
-MAKEFUN_ENV_URL=<env url> python3 main.py
-```
+To ensure `main.py` stays well under the 4,096-byte limit, `pack.py` compiles `engine.py` into a compact self-extracting runner:
+1. Reads `engine.py` as bytes.
+2. Compresses using raw-deflate (`zlib.compressobj(9, zlib.DEFLATED, -15)`).
+3. Encodes the compressed stream using base85 (`base64.b85encode`).
+4. Generates a single-line `main.py` entrypoint:
+   ```python
+   import zlib,base64;exec(zlib.decompress(base64.b85decode('<blob>'),-15))
+   ```
+5. Prints the exact byte size of `main.py`.
 
-Python 3.13, standard library only. Deterministic: no wall clock, no
-unseeded randomness.
+## Verification
+
+- **`main.py` Byte Size (before header):** 3,664 bytes (limit: 4,096 bytes).
+- **`main.py` Byte Size (with header):** 3,744 bytes (limit: 4,096 bytes).
+- **Syntax Check:** `python3 -m py_compile main.py engine.py pack.py` passed successfully.
+- **Perft Smoke Test:** `perft_smoke.py` completed all test positions successfully (**PERFT ALL OK**).
+- **Payload Integrity:** Extracted base85 payload from `main.py` (skipping header line), decompressed with raw deflate (`wbits=-15`), and verified byte-for-byte match with `engine.py` (**PAYLOAD MATCHES ENGINE**).
